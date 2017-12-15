@@ -1,3 +1,4 @@
+import sys
 import numpy as np
 import tensorflow as tf
 
@@ -56,16 +57,24 @@ class Network(object):
         session: The current TensorFlow session
         ignore_missing: If true, serialized weights for missing layers are ignored.
         '''
-        data_dict = np.load(data_path).item()
+        data_dict = np.load(data_path, encoding="latin1").item()
         for op_name in data_dict:
             with tf.variable_scope(op_name, reuse=True):
-                for param_name, data in data_dict[op_name].iteritems():
-                    try:
-                        var = tf.get_variable(param_name)
-                        session.run(var.assign(data))
-                    except ValueError:
-                        if not ignore_missing:
-                            raise
+
+              if sys.version_info[0] < 3:
+                # for Python 2
+                to_iter = data_dict[op_name].iteritems()
+              else:
+                # for Python 3
+                to_iter = data_dict[op_name].items()
+
+              for param_name, data in to_iter:
+                  try:
+                      var = tf.get_variable(param_name)
+                      session.run(var.assign(data))
+                  except ValueError:
+                      if not ignore_missing:
+                          raise
 
     def feed(self, *args):
         '''Set the input(s) for the next operation by replacing the terminal nodes.
@@ -74,7 +83,8 @@ class Network(object):
         assert len(args) != 0
         self.terminals = []
         for fed_layer in args:
-            if isinstance(fed_layer, basestring):
+
+            if isinstance(fed_layer, str):
                 try:
                     fed_layer = self.layers[fed_layer]
                 except KeyError:
@@ -85,6 +95,9 @@ class Network(object):
     def get_output(self):
         '''Returns the current network output.'''
         return self.terminals[-1]
+
+    def get_features(self, layer):
+        return self.layers[layer]
 
     def get_unique_name(self, prefix):
         '''Returns an index-suffixed unique name for the given prefix.
@@ -124,7 +137,7 @@ class Network(object):
         # Convolution for a given input and kernel
         convolve = lambda i, k: tf.nn.conv2d(i, k, [1, s_h, s_w, 1], padding=padding)
         with tf.variable_scope(name) as scope:
-            kernel = self.make_var('weights', shape=[k_h, k_w, c_i / group, c_o])
+            kernel = self.make_var('weights', shape=[k_h, k_w, int(c_i) / group, c_o])
             if group == 1:
                 # This is the common-case. Convolve the input without any further complications.
                 output = convolve(input, kernel)
@@ -203,7 +216,8 @@ class Network(object):
 
     @layer
     def softmax(self, input, name):
-        input_shape = map(lambda v: v.value, input.get_shape())
+        input_shape = list(map(lambda v: v.value, input.get_shape()))
+
         if len(input_shape) > 2:
             # For certain models (like NiN), the singleton spatial dimensions
             # need to be explicitly squeezed, since they're not broadcast-able
